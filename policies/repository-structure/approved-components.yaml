@@ -1,1 +1,14 @@
+gitops/components/operators:
+  - gitops
+  - acm
+  - acs
+  - logging
+  - virtualization
+  - storage
 
+gitops/components/operators/storage:
+  - hitachi-csi
+
+gitops/components/storage:
+  - hitachi
+  - kubevirt-csi
