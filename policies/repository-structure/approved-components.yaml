@@ -1,14 +1,38 @@
-gitops/components/operators:
-  - gitops
-  - acm
-  - acs
-  - logging
-  - virtualization
-  - storage
 
-gitops/components/operators/storage:
-  - hitachi-csi
+# OpenShift GitOps Governance Policy
+#
+# protected_paths:
+#   Recursively protect files against additions,
+#   modifications and deletions.
+#
+# approved_directories:
+#   Define permitted immediate subdirectories.
+#   Missing or unauthorised directories fail validation.
 
-gitops/components/storage:
-  - hitachi
-  - kubevirt-csi
+protected_paths:
+  - gitops/components
+
+approved_directories:
+  gitops/components:
+    - common
+    - management
+    - operators
+    - security
+    - storage
+    - virtualization
+    - workload
+
+  gitops/components/operators:
+    - gitops
+    - acm
+    - acs
+    - logging
+    - virtualization
+    - storage
+
+  gitops/components/operators/storage:
+    - hitachi-csi
+
+  gitops/components/storage:
+    - hitachi
+    - kubevirt-csi
