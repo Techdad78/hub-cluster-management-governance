@@ -6,7 +6,6 @@ import unittest
 from pathlib import Path
 
 
-# Load the governance validator.
 SCRIPT = (
     Path(__file__).resolve().parent.parent
     / "scripts/validate-structure.py"
@@ -15,7 +14,6 @@ SCRIPT = (
 spec = importlib.util.spec_from_file_location(
     "validate_structure", SCRIPT
 )
-
 validator = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(validator)
 
@@ -23,11 +21,12 @@ spec.loader.exec_module(validator)
 class TestComponentStructure(unittest.TestCase):
 
     def setUp(self):
-        """Create an isolated temporary component repository."""
+        """Create an isolated temporary platform repository."""
 
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo = Path(self.temp_dir.name)
 
+        # Legacy policy format, retained for regression testing.
         self.policy = {
             "gitops/components/operators": [
                 "acm",
@@ -38,6 +37,24 @@ class TestComponentStructure(unittest.TestCase):
             ],
         }
 
+        # New policy format with recursive component protection.
+        self.expanded_policy = {
+            "protected_paths": [
+                "gitops/components",
+            ],
+            "approved_directories": {
+                "gitops/components": [
+                    "common",
+                    "management",
+                    "operators",
+                    "security",
+                    "storage",
+                    "virtualization",
+                    "workload",
+                ],
+            },
+        }
+
         for path, components in self.policy.items():
             for component in components:
                 (self.repo / path / component).mkdir(
@@ -45,9 +62,16 @@ class TestComponentStructure(unittest.TestCase):
                     exist_ok=True,
                 )
 
-    def tearDown(self):
-        """Remove the temporary repository after each test."""
+        for path, components in (
+            self.expanded_policy["approved_directories"].items()
+        ):
+            for component in components:
+                (self.repo / path / component).mkdir(
+                    parents=True,
+                    exist_ok=True,
+                )
 
+    def tearDown(self):
         self.temp_dir.cleanup()
 
     def run_git(self, *args):
@@ -75,7 +99,6 @@ class TestComponentStructure(unittest.TestCase):
         """Commit current files and return the baseline SHA."""
 
         self.run_git("add", ".")
-
         self.run_git(
             "commit", "-q", "--allow-empty",
             "-m", "Approved baseline"
@@ -86,8 +109,6 @@ class TestComponentStructure(unittest.TestCase):
         ).stdout.strip()
 
     def component_file(self, name="component.yaml"):
-        """Return a file path inside the protected ACM component."""
-
         return (
             self.repo
             / "gitops/components/operators/acm"
@@ -95,8 +116,6 @@ class TestComponentStructure(unittest.TestCase):
         )
 
     def assert_protected_change(self, errors, filename):
-        """Confirm the expected protected file was reported."""
-
         self.assertTrue(
             any(
                 "PROTECTED component file changed" in error
@@ -107,85 +126,59 @@ class TestComponentStructure(unittest.TestCase):
         )
 
     # --------------------------------------------------
-    # Directory structure tests
+    # Original directory structure tests
     # --------------------------------------------------
 
     def test_approved_structure_passes(self):
-        """Approved component directories should pass."""
-
         errors = validator.validate_structure(
-            self.repo,
-            self.policy,
+            self.repo, self.policy
         )
-
         self.assertEqual(errors, [])
 
     def test_unauthorised_component_fails(self):
-        """An unknown component directory should be rejected."""
-
         (
             self.repo
             / "gitops/components/operators/unknown-operator"
         ).mkdir()
 
         errors = validator.validate_structure(
-            self.repo,
-            self.policy,
+            self.repo, self.policy
         )
 
         self.assertTrue(
-            any(
-                "UNAUTHORISED component" in error
-                for error in errors
-            )
+            any("UNAUTHORISED component" in e for e in errors)
         )
 
     def test_missing_approved_component_fails(self):
-        """A missing approved component should be rejected."""
-
         (
             self.repo
             / "gitops/components/operators/acm"
         ).rmdir()
 
         errors = validator.validate_structure(
-            self.repo,
-            self.policy,
+            self.repo, self.policy
         )
 
         self.assertTrue(
-            any(
-                "MISSING approved component" in error
-                for error in errors
-            )
+            any("MISSING approved component" in e for e in errors)
         )
 
     # --------------------------------------------------
-    # Git-based component change tests
+    # Original Git-based change detection tests
     # --------------------------------------------------
 
     def test_modified_component_file_fails(self):
-        """Modification of a protected file should be rejected."""
-
         self.init_git_repository()
 
         component = self.component_file()
-        component.write_text(
-            "kind: ConfigMap\n",
-            encoding="utf-8",
-        )
+        component.write_text("kind: ConfigMap\n")
 
         baseline = self.commit_baseline()
 
-        component.write_text(
-            "kind: Secret\n",
-            encoding="utf-8",
-        )
+        component.write_text("kind: Secret\n")
 
         errors = validator.validate_component_changes(
-            self.repo,
-            self.policy,
-            baseline,
+            self.repo, self.policy, baseline
         )
 
         self.assert_protected_change(
@@ -193,16 +186,11 @@ class TestComponentStructure(unittest.TestCase):
         )
 
     def test_committed_file_addition_fails(self):
-        """A committed new protected file should be rejected."""
-
         self.init_git_repository()
         baseline = self.commit_baseline()
 
         component = self.component_file("new-component.yaml")
-        component.write_text(
-            "kind: ConfigMap\n",
-            encoding="utf-8",
-        )
+        component.write_text("kind: ConfigMap\n")
 
         self.run_git("add", ".")
         self.run_git(
@@ -210,9 +198,7 @@ class TestComponentStructure(unittest.TestCase):
         )
 
         errors = validator.validate_component_changes(
-            self.repo,
-            self.policy,
-            baseline,
+            self.repo, self.policy, baseline
         )
 
         self.assert_protected_change(
@@ -220,15 +206,10 @@ class TestComponentStructure(unittest.TestCase):
         )
 
     def test_committed_file_deletion_fails(self):
-        """Deletion of a protected file should be rejected."""
-
         self.init_git_repository()
 
         component = self.component_file()
-        component.write_text(
-            "kind: ConfigMap\n",
-            encoding="utf-8",
-        )
+        component.write_text("kind: ConfigMap\n")
 
         baseline = self.commit_baseline()
 
@@ -241,9 +222,7 @@ class TestComponentStructure(unittest.TestCase):
         )
 
         errors = validator.validate_component_changes(
-            self.repo,
-            self.policy,
-            baseline,
+            self.repo, self.policy, baseline
         )
 
         self.assert_protected_change(
@@ -251,31 +230,99 @@ class TestComponentStructure(unittest.TestCase):
         )
 
     def test_untracked_file_fails(self):
-        """An untracked file in a protected path should be rejected."""
-
         self.init_git_repository()
         baseline = self.commit_baseline()
 
         component = self.component_file("untracked.yaml")
-        component.write_text(
-            "kind: ConfigMap\n",
-            encoding="utf-8",
-        )
+        component.write_text("kind: ConfigMap\n")
 
         errors = validator.validate_component_changes(
-            self.repo,
-            self.policy,
-            baseline,
+            self.repo, self.policy, baseline
         )
 
         self.assertTrue(
             any(
-                "UNTRACKED file in protected component" in error
-                and "acm/untracked.yaml" in error
-                for error in errors
-            ),
-            f"Expected untracked file violation, got: {errors}"
+                "UNTRACKED file in protected component" in e
+                and "acm/untracked.yaml" in e
+                for e in errors
+            )
         )
+
+    # --------------------------------------------------
+    # Expanded recursive protection tests
+    # --------------------------------------------------
+
+    def test_security_component_modification_fails(self):
+        """T08: Changes under security must be rejected."""
+
+        self.init_git_repository()
+
+        component = (
+            self.repo
+            / "gitops/components/security/security-config.yaml"
+        )
+        component.write_text("kind: ConfigMap\n")
+
+        baseline = self.commit_baseline()
+
+        component.write_text("kind: Secret\n")
+
+        errors = validator.validate_component_changes(
+            self.repo, self.expanded_policy, baseline
+        )
+
+        self.assert_protected_change(
+            errors, "security/security-config.yaml"
+        )
+
+    def test_common_component_addition_fails(self):
+        """T09: New files in nested common paths must fail."""
+
+        self.init_git_repository()
+        baseline = self.commit_baseline()
+
+        component_dir = (
+            self.repo
+            / "gitops/components/common/authentication"
+        )
+        component_dir.mkdir(parents=True, exist_ok=True)
+
+        component = component_dir / "oauth.yaml"
+        component.write_text("kind: OAuth\n")
+
+        self.run_git("add", ".")
+        self.run_git(
+            "commit", "-q", "-m", "Add OAuth configuration"
+        )
+
+        errors = validator.validate_component_changes(
+            self.repo, self.expanded_policy, baseline
+        )
+
+        self.assert_protected_change(
+            errors, "common/authentication/oauth.yaml"
+        )
+
+    def test_changes_outside_components_pass(self):
+        """T10: Unprotected paths must remain editable."""
+
+        self.init_git_repository()
+
+        config_dir = self.repo / "gitops/clusters/site-a"
+        config_dir.mkdir(parents=True, exist_ok=True)
+
+        config = config_dir / "configuration.yaml"
+        config.write_text("environment: dev\n")
+
+        baseline = self.commit_baseline()
+
+        config.write_text("environment: prod\n")
+
+        errors = validator.validate_component_changes(
+            self.repo, self.expanded_policy, baseline
+        )
+
+        self.assertEqual(errors, [])
 
 
 if __name__ == "__main__":
