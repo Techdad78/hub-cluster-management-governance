@@ -89,13 +89,15 @@ def validate_structure(repository, policy):
     return errors
 
 
+
 def validate_component_changes(repository, policy, base_ref):
     """
-    Detect changes to protected component files.
+    Detect changes within protected component directories.
 
-    Compares the Git working tree against the specified baseline.
-
-    In CI, base_ref should identify the trusted base commit.
+    Checks:
+    - Committed modifications, additions and deletions.
+    - Tracked changes in the working tree and index.
+    - Untracked files not excluded by .gitignore.
     """
 
     protected_paths = [
@@ -103,7 +105,8 @@ def validate_component_changes(repository, policy, base_ref):
         for path in policy.keys()
     ]
 
-    result = subprocess.run(
+    # Detect tracked changes against the Git baseline.
+    diff_result = subprocess.run(
         [
             "git",
             "-C",
@@ -119,15 +122,38 @@ def validate_component_changes(repository, policy, base_ref):
         check=True,
     )
 
+    # Detect untracked files within protected directories.
+    untracked_result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repository),
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "--",
+            *protected_paths,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
     errors = []
 
-    for changed_file in result.stdout.splitlines():
+    for changed_file in sorted(set(diff_result.stdout.splitlines())):
         errors.append(
             f"PROTECTED component file changed: {changed_file}"
         )
 
-    return errors
+    for untracked_file in sorted(
+        set(untracked_result.stdout.splitlines())
+    ):
+        errors.append(
+            f"UNTRACKED file in protected component: {untracked_file}"
+        )
 
+    return errors
 
 def main():
 
